@@ -1,18 +1,19 @@
 import re
 import os
 import shutil
-import time
 
 # fileName = "/run/media/prime/SAMSUNG/wiki_dump/wiki.xml";
-fileName = "tempText.txt"       # Input text document.
+# fileName = "tempText.txt"       # Input text document.
+fileName = "/media/DATA/wiki_Dump/wiki.xml"
 wordsHead = None;               # first node in words list
 openWordsFile = None;           # opened input file.
-lineCountLimit = 5;
+lineCountLimit = 100000;
 fileEnding = "***---***";       # file end tag; has size as it's count.
+progressAnimationChar = '|';
 
 class wordsTree():
 
-
+    allWords = {};
     
     def __init__(self,word = "",index = 0,length = 0):
         self.words = {};
@@ -90,6 +91,21 @@ class wordsTree():
         return True;
 
 
+    # sweep words Tree to Dicationary to avoid over memory utilization
+    def sweepWordsToDictionary(self,semiWord = ""):
+        for i in self.words:
+            if(self.words[i] != None):
+                self.words[i].sweepWordsToDictionary(semiWord = semiWord+i);
+            if(self.ends[i] > 0):
+                # print(semiWord+ i +":"+str(self.ends[i]));
+                if(semiWord+i in wordsTree.allWords):
+                    wordsTree.allWords[semiWord+i] += self.ends[i];
+                else:
+                    wordsTree.allWords[semiWord+i] = self.ends[i];
+            # clear data
+            self.ends[i] = 0;
+            self.words[i] = None;
+        return True;
 
 
 
@@ -103,12 +119,13 @@ class wordsTree():
             raise Exception("No open words write file passed to writes wordsTree");
 
         
-        for i in self.words:
-            if(self.words[i] != None):
-                self.words[i].writeWordsFile(semiWord = semiWord+i,openWordsFile = openWordsFile);
-            if(self.ends[i] > 0):
-                openWordsFile.write(semiWord+i +":"+str(self.ends[i])+"\n");
-
+        # for i in self.words:
+        #     if(self.words[i] != None):
+        #         self.words[i].writeWordsFile(semiWord = semiWord+i,openWordsFile = openWordsFile);
+        #     if(self.ends[i] > 0):
+        #         openWordsFile.write(semiWord+i +":"+str(self.ends[i])+"\n");
+        for i in wordsTree.allWords:
+            openWordsFile.write(i+":"+str(wordsTree.allWords[i])+"\n");
         
         return True;
 
@@ -129,17 +146,21 @@ class wordsTree():
                 return None;
 
             
+        # for line in openWordsFile:
+        #     word,count = line.split(":");
+        #     self.append(word = word, index = 0, length = len(word));
+        #     wordEndNode = self.searchWord(word);
+        #     # TODO just added word!how does wordEndNode=None at any point? check!
+        #     if(wordEndNode == None):
+        #         print("Unexpected-Error: "+word);
+        #         continue;
+        #     else:
+        #         wordEndNode.ends[word[-1]] = int(count);
+        
         for line in openWordsFile:
             word,count = line.split(":");
-            self.append(word = word, index = 0, length = len(word));
-            wordEndNode = self.searchWord(word);
-            # TODO just added word!how does wordEndNode=None at any point? check!
-            if(wordEndNode == None):
-                print("Unexpected-Error: "+word);
-                continue;
-            else:
-                wordEndNode.ends[word[-1]] = int(count);
-                
+            wordsTree.allWords[word] = int(count);
+        
         return True;
 
 # -----------------------------------------------------------------------------------------
@@ -147,6 +168,7 @@ class wordsTree():
 
 # display progress bar
 def displayProgress(continueFrom = 0, currentProgress = 0, outOfTotal = 100):
+    global progressAnimationChar;
     # calculate no.of progress values
     continueFrom = int((continueFrom*100)/outOfTotal);
     currentProgress = int((currentProgress*100)/outOfTotal);
@@ -170,8 +192,18 @@ def displayProgress(continueFrom = 0, currentProgress = 0, outOfTotal = 100):
             currentSymbol = '=';
         elif(count > currentProgress):
             currentSymbol = ' ';
-           
-    print("] "+str(currentProgress)+"%",end = "");
+
+    # progress animation
+    if(progressAnimationChar == '\\'):
+        progressAnimationChar = '|';
+    elif(progressAnimationChar == '|'):
+        progressAnimationChar = '/';
+    elif(progressAnimationChar == '/'):
+        progressAnimationChar = '-';
+    elif(progressAnimationChar == '-'):
+        progressAnimationChar = '\\';
+
+    print("] "+str(currentProgress)+"%"+progressAnimationChar,end = "");
 
     return True;
 
@@ -249,6 +281,8 @@ def updatePersistentFile(file = "",position = 0):
     # back-up existing words file
     try:
         shutil.copyfile(src = wordsListFile, dst = wordsListFile+backUpExt);
+    except IOError as e:
+        print("",end = "");     # because - First time backup. ignore
     except FileNotFoundError as e:
         print("",end = "");     # because - First time backup. ignore
     except Exception as e:
@@ -257,11 +291,15 @@ def updatePersistentFile(file = "",position = 0):
     # back-up existing seek file
     try:
         shutil.copyfile(src = seekPositionFile, dst = seekPositionFile+backUpExt);
+    except IOError as e:
+        print("",end = "");     # because - First time backup. ignore
     except FileNotFoundError as e:
         print("",end = "");     # because - First time backup. ignore
     except Exception as e:
         raise Exception("ERROR: while making a back-up of seek file!,,,"+str(e));
 
+
+    wordsHead.sweepWordsToDictionary();
 
     
     # update words list
@@ -328,14 +366,22 @@ def collectWords(file = ""):
             displayProgress(continueFrom = 0,
                             currentProgress = openFile.tell(),
                             outOfTotal = os.path.getsize(file));
-            time.sleep(1);
             # save current progress
             updatePersistentFile(file = file, position = openFile.tell());
             lineCount = 0;
             
-        for word in re.findall(r'[a-zA-Z\']*', line):
+        # for word in re.findall(r'[a-zA-Z\']*', line):
+        for word in re.findall(r'[a-zA-Z]+\'?[a-zA-Z]+', line):
             if(word):
-                wordsHead.append(word = word.lower(), index = 0, length = len(word));
+                if(len(word) > 200):
+                    print("BIG WORD: "+word);
+                else:
+                    try:
+                        wordsHead.append(word = word.lower(), index = 0, length = len(word));
+                    except RuntimeError as e:
+                        print("WORD::"+word);
+                        print("RuntimeError :: "+str(e));
+                        raise e;
         lineCount += 1;
         line = openFile.readline();
 
